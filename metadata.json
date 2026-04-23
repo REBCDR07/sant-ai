@@ -1,0 +1,9 @@
+{
+  "name": "SantéAI",
+  "description": "Assistant de triage communautaire avec diagnostic basé sur les symptômes, détection visuelle de la malnutrition, et alertes épidémiques.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": []
+}
