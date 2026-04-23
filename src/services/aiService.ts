@@ -28,11 +28,11 @@ export async function analyzeSymptoms(
   };
 }
 
-export async function analyzeMalnutritionImage(base64Image: string): Promise<Omit<MalnutritionCheck, 'id' | 'imageUrl' | 'timestamp'>> {
+export async function analyzeMalnutritionImages(base64Images: string[]): Promise<Omit<MalnutritionCheck, 'id' | 'imageUrl' | 'timestamp'>> {
   const response = await fetch('/api/analyze-malnutrition', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ base64Image })
+    body: JSON.stringify({ base64Images })
   });
 
   if (!response.ok) {

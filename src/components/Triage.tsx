@@ -83,9 +83,14 @@ export default function Triage() {
     
     // Inline validation
     const newErrors: typeof errors = {};
-    if (!age || age <= 0) newErrors.age = 'Âge invalide ou manquant.';
-    if (!weight || weight <= 0) newErrors.weight = 'Poids invalide ou manquant.';
-    if (!symptoms.trim() || symptoms.trim().length < 5) newErrors.symptoms = 'Symptômes trop courts ou manquants.';
+    if (!age) newErrors.age = 'L\'âge est requis.';
+    else if (age <= 0 || age > 120) newErrors.age = 'L\'âge doit être entre 1 et 120.';
+    
+    if (!weight) newErrors.weight = 'Le poids est requis.';
+    else if (weight <= 0 || weight > 200) newErrors.weight = 'Le poids doit être réaliste.';
+    
+    if (!symptoms.trim()) newErrors.symptoms = 'Les symptômes sont requis pour l\'analyse.';
+    else if (symptoms.trim().length < 5) newErrors.symptoms = 'Décrivez plus précisément les symptômes (min 5 caractères).';
     
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);

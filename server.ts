@@ -147,37 +147,35 @@ Adapte les traitements aux réalités des centres de soins primaires ou dispensa
 
   // API Route: Malnutrition (Image)
   app.post("/api/analyze-malnutrition", async (req, res) => {
-    const { base64Image } = req.body;
+    const { base64Images } = req.body; // Expect array of base64 strings
     
-    if (!base64Image) {
-      return res.status(400).json({ error: "L'image est requise" });
+    if (!base64Images || !Array.isArray(base64Images) || base64Images.length === 0) {
+      return res.status(400).json({ error: "Au moins une image est requise" });
     }
 
     const prompt = `Tu es un expert médical (pédiatrie et nutrition) au sein d'une organisation humanitaire.
-Ta mission est d'effectuer un diagnostic visuel de la malnutrition infantile (MAM/MAS) sévère à partir de photos.
-Analyse cette image pour détecter des signes de : 
+Ta mission est d'effectuer un diagnostic visuel de la malnutrition infantile (MAM/MAS) sévère à partir de ces photos du patient.
+Même si les images ne montrent que des bras ou des parties du corps comme la tête, ou les cheveux, analyse CHAQUE image fournie minutieusement pour y déceler ces signes : 
 1. Marasme (fonte musculaire extrême, visage de vieillard, peau plissée).
-2. Kwashiorkor (œdèmes bilatéraux, abdomen ballonné, lésions cutanées).
-Retourne un score de risque, un niveau, l'analyse détaillée et des recommandations.`;
+2. Kwashiorkor (prête particulièrement attention à la présence d'œdèmes bilatéraux gonflés, brillants ou tendus, lésions cutanées dermatoses, et l'assombrissement).
+3. Signes capillaires (texture des cheveux : cheveux fins, clairsemés, décoloration rousse/jaunâtre ou signe du drapeau "flag sign", perte de cheveux facile).
+Retourne un diagnostic unifié, un seul score de risque, un niveau global, l'analyse détaillée des signes sur l'ensemble des photos, et des recommandations.`;
 
-    let mimeType = 'image/jpeg';
-    if (base64Image.startsWith('data:image/png')) mimeType = 'image/png';
-    else if (base64Image.startsWith('data:image/webp')) mimeType = 'image/webp';
-    else if (base64Image.startsWith('data:image/heic')) mimeType = 'image/heic';
-    
-    const base64Data = base64Image.split(',')[1] || base64Image;
+    const parts = base64Images.map(base64Image => {
+       let mimeType = 'image/jpeg';
+       if (base64Image.startsWith('data:image/png')) mimeType = 'image/png';
+       else if (base64Image.startsWith('data:image/webp')) mimeType = 'image/webp';
+       else if (base64Image.startsWith('data:image/heic')) mimeType = 'image/heic';
+       const base64Data = base64Image.split(',')[1] || base64Image;
+       return { inlineData: { data: base64Data, mimeType: mimeType } };
+    });
 
     try {
       const response = await fetchWithKeyRotation(async (aiClient) => {
         return aiClient.models.generateContent({
           model: 'gemini-2.5-flash',
           contents: [
-            {
-              inlineData: {
-                data: base64Data,
-                mimeType: mimeType
-              }
-            },
+            ...parts,
             prompt
           ],
           config: {
@@ -279,7 +277,7 @@ Retourne un score de risque, un niveau, l'analyse détaillée et des recommandat
 
     const systemPromptMessage = {
       role: 'user',
-      parts: [{ text: "Tu es l'assistant IA médical intégré à SantéAI. Ton rôle est de conseiller et d'orienter les Agents de Santé Communautaires (ASC) dans des zones rurales ou des dispensaires. Fournis des explications claires, concises, des rappels de protocoles de santé primaires et réponds à leurs doutes. Reste professionnel, empathique, et n'oublie jamais de conseiller la référence vers un médecin pour les cas graves." }]
+      parts: [{ text: "Tu es l'assistant IA médical intégré à SantéAI. Ton rôle est de conseiller et d'orienter les Agents de Santé Communautaires (ASC) dans des zones rurales ou des dispensaires. Fournis des explications claires, concises, des rappels de protocoles de santé primaires et réponds à leurs doutes. Reste professionnel, empathique, et n'oublie jamais de conseiller la référence vers un médecin pour les cas graves. IMPORTANT: N'utilise JAMAIS de formatage Markdown (pas d'astérisques * ni texte en gras ou italique). Structure tes réponses avec des sauts de ligne ou des tirets simples (-) uniquement, pour que ton texte puisse être lu vocalement sans symboles étranges." }]
     };
 
     const ackMessage = {

@@ -1,14 +1,14 @@
 import React, { useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Camera, Image as ImageIcon, Loader2, AlertTriangle, Info, CheckCircle } from 'lucide-react';
-import { analyzeMalnutritionImage } from '../services/aiService';
+import { Camera, Image as ImageIcon, Loader2, AlertTriangle, Info, CheckCircle, X } from 'lucide-react';
+import { analyzeMalnutritionImages } from '../services/aiService';
 import { useAppContext } from '../context/AppContext';
 
 export default function Malnutrition() {
   const { addMalnutritionCheck, setFollowUp } = useAppContext();
   
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [image, setImage] = useState<string | null>(null);
+  const [images, setImages] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<any | null>(null);
@@ -16,53 +16,67 @@ export default function Malnutrition() {
   const [followUpSet, setFollowUpSet] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
 
-    if (!file.type.startsWith('image/')) {
-      setError('Veuillez sélectionner une image valide.');
+    const validFiles = files.filter(f => f.type.startsWith('image/'));
+    if (validFiles.length === 0) {
+      setError('Veuillez sélectionner des images valides.');
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      if (event.target?.result) {
-        setImage(event.target.result as string);
-        setResult(null);
-        setError('');
-      }
-    };
-    reader.readAsDataURL(file);
+    setResult(null);
+    setError('');
+
+    validFiles.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setImages(prev => [...prev, event.target!.result as string]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+    
+    // Clear input so same file can be selected again
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const clearImage = () => {
-    setImage(null);
+  const removeImage = (idx: number) => {
+    setImages(prev => prev.filter((_, i) => i !== idx));
+    setResult(null);
+    setCurrentId(null);
+    setFollowUpSet(false);
+  };
+
+  const clearImages = () => {
+    setImages([]);
     setResult(null);
     setError('');
     setCurrentId(null);
     setFollowUpSet(false);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
   };
 
   const handleAnalyze = async () => {
-    if (!image) return;
+    if (images.length === 0) {
+      setError("Veuillez ajouter au moins une photo avant l'analyse.");
+      return;
+    }
     
     setLoading(true);
     setError('');
     
     try {
-      const res = await analyzeMalnutritionImage(image);
+      const res = await analyzeMalnutritionImages(images);
       setResult(res);
       const id = addMalnutritionCheck({
-        imageUrl: image,
+        imageUrl: images[0], // Store primary image in history for simplicity
         ...res
       });
       setCurrentId(id);
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Erreur lors de l'analyse de l'image. Assurez-vous d'avoir une bonne connexion.");
+      setError(err.message || "Erreur lors de l'analyse des images. Assurez-vous d'avoir une bonne connexion.");
     } finally {
       setLoading(false);
     }
@@ -102,20 +116,21 @@ export default function Malnutrition() {
         </div>
       )}
 
-      {!image ? (
+      {!images.length ? (
         <div className="space-y-4">
           <div 
             onClick={() => fileInputRef.current?.click()}
             className="border-2 border-dashed border-slate-300 bg-slate-50 rounded-2xl p-8 flex flex-col items-center justify-center text-slate-500 cursor-pointer hover:bg-slate-100 transition-colors h-64"
           >
             <Camera className="w-12 h-12 mb-3 text-slate-400" />
-            <p className="font-bold text-sm tracking-widest uppercase text-slate-700">Prendre une photo</p>
-            <p className="text-[10px] uppercase tracking-widest opacity-60 mt-2 text-center">Ou choisir depuis la galerie</p>
+            <p className="font-bold text-sm tracking-widest uppercase text-slate-700">Prendre des photos</p>
+            <p className="text-[10px] uppercase tracking-widest opacity-60 mt-2 text-center">Vous pouvez sélectionner plusieurs images</p>
           </div>
           <input 
             type="file" 
             accept="image/*" 
             capture="environment"
+            multiple
             ref={fileInputRef} 
             onChange={handleFileChange} 
             className="hidden" 
@@ -123,35 +138,62 @@ export default function Malnutrition() {
           
           <div className="bg-slate-50 p-4 rounded-xl flex gap-3 text-slate-600 border border-slate-200">
             <Info className="w-5 h-5 shrink-0 text-slate-400" />
-            <p className="text-xs leading-relaxed">Assurez-vous de prendre la photo dans un endroit bien éclairé, montrant les cheveux, le visage ou les membres si nécessaire (recherche d'œdèmes).</p>
+            <p className="text-xs leading-relaxed">Prenez plusieurs photos : visage, cheveux, membres (recherche d'œdèmes) dans un endroit bien éclairé.</p>
           </div>
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="relative rounded-2xl overflow-hidden bg-slate-900 border border-slate-900">
-            <img 
-              src={image} 
-              alt="Patient" 
-              className={`w-full h-auto max-h-80 object-contain transition-opacity duration-300 ${loading ? 'opacity-50' : 'opacity-100'}`} 
-            />
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            {images.map((imgUrl, idx) => (
+              <div key={idx} className="relative rounded-xl overflow-hidden bg-slate-900 border border-slate-200 aspect-square">
+                <img 
+                  src={imgUrl} 
+                  alt={`Patient ${idx + 1}`} 
+                  className={`w-full h-full object-cover transition-opacity duration-300 ${loading ? 'opacity-50' : 'opacity-100'}`} 
+                />
+                {!loading && !result && (
+                  <button 
+                    onClick={() => removeImage(idx)}
+                    className="absolute top-2 right-2 bg-slate-900/60 p-1.5 rounded-full text-white hover:bg-rose-500 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            ))}
             
-            {loading && (
-              <motion.div 
-                className="absolute left-0 right-0 h-1 bg-emerald-400 shadow-[0_0_15px_rgba(52,211,153,0.8)]"
-                animate={{ top: ['0%', '100%', '0%'] }}
-                transition={{ duration: 2.5, ease: "linear", repeat: Infinity }}
-              />
-            )}
-
             {!loading && !result && (
-              <button 
-                onClick={clearImage}
-                className="absolute top-2 right-2 bg-gray-900/60 p-2 rounded-full text-white"
+              <div 
+                onClick={() => fileInputRef.current?.click()}
+                className="border-2 border-dashed border-slate-300 bg-slate-50 rounded-xl flex flex-col items-center justify-center text-slate-500 cursor-pointer hover:bg-slate-100 transition-colors aspect-square"
               >
-                ✕
-              </button>
+                <span className="font-bold text-2xl">+</span>
+                <span className="text-[10px] uppercase font-bold tracking-widest mt-1">Ajouter</span>
+              </div>
             )}
+            
+            <input 
+              type="file" 
+              accept="image/*" 
+              multiple
+              ref={fileInputRef} 
+              onChange={handleFileChange} 
+              className="hidden" 
+            />
           </div>
+            
+          {loading && (
+             <div className="w-full flex justify-center py-4">
+                <motion.div 
+                   animate={{ opacity: [1, 0.5, 1] }} 
+                   transition={{ repeat: Infinity, duration: 1.5 }}
+                   className="flex items-center gap-2 text-emerald-600 font-bold text-sm tracking-widest uppercase"
+                >
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Analyse des images...</span>
+                </motion.div>
+             </div>
+          )}
 
           {!result ? (
             <button
@@ -159,19 +201,10 @@ export default function Malnutrition() {
               disabled={loading}
               className="w-full mt-4 bg-slate-900 text-white py-4 rounded-xl font-bold uppercase tracking-widest text-sm hover:bg-black transition-colors flex items-center justify-center gap-2 disabled:opacity-70 relative overflow-hidden"
             >
-              {loading ? (
-                <motion.div 
-                   animate={{ opacity: [1, 0.5, 1] }} 
-                   transition={{ repeat: Infinity, duration: 1.5 }}
-                   className="flex items-center gap-2"
-                >
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Analyse en cours...</span>
-                </motion.div>
-              ) : (
+              {!loading && (
                 <div className="flex items-center gap-2">
                   <Camera className="w-5 h-5" />
-                  <span>Lancer le diagnostic</span>
+                  <span>Lancer le diagnostic unifié</span>
                 </div>
               )}
             </button>
