@@ -56,15 +56,14 @@ async function fetchWithKeyRotation(generateContentFn: (ai: GoogleGenAI) => Prom
   }
 }
 
-async function startServer() {
-  const app = express();
-  const PORT = 3000;
+export const app = express();
+const PORT = process.env.PORT || 3000;
 
-  // Middleware pour parser le JSON avec une limite plus élevée pour les images base64
-  app.use(express.json({ limit: '10mb' }));
+// Middleware pour parser le JSON avec une limite plus élevée pour les images base64
+app.use(express.json({ limit: '10mb' }));
 
-  // API Route: Triage (Symptômes)
-  app.post("/api/analyze-symptoms", async (req, res) => {
+// API Route: Triage (Symptômes)
+app.post("/api/analyze-symptoms", async (req, res) => {
     const { symptoms, age, weight, sex } = req.body;
     
     if (!symptoms) {
@@ -313,7 +312,8 @@ Retourne un diagnostic unifié, un seul score de risque, un niveau global, l'ana
     }
   });
 
-  // Vite middleware for development
+// Vite middleware for development
+async function setupVite() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -327,10 +327,12 @@ Retourne un diagnostic unifié, un seul score de risque, un niveau global, l'ana
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  setupVite().then(() => {
+    app.listen(Number(PORT), "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  });
+}

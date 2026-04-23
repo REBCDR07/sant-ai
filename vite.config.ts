@@ -12,13 +12,27 @@ export default defineConfig(({mode}) => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
+        includeAssets: ['icon.svg', 'pwa-192x192.svg', 'pwa-512x512.svg'],
         manifest: {
           name: 'SantéAI - Triage Communautaire',
           short_name: 'SantéAI',
           description: 'Outil de triage et dépistage hors-ligne pour agents de santé.',
-          theme_color: '#f8fafc',
+          theme_color: '#059669',
           background_color: '#f8fafc',
-          display: 'standalone'
+          display: 'standalone',
+          icons: [
+            {
+              src: 'pwa-192x192.svg',
+              sizes: '192x192',
+              type: 'image/svg+xml'
+            },
+            {
+              src: 'pwa-512x512.svg',
+              sizes: '512x512',
+              type: 'image/svg+xml',
+              purpose: 'any maskable'
+            }
+          ]
         }
       })
     ],

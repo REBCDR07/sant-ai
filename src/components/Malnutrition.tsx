@@ -74,6 +74,16 @@ export default function Malnutrition() {
         ...res
       });
       setCurrentId(id);
+
+      // Auditory Feedback
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(
+          `L'analyse IA indique un risque ${res.riskLevel}. ${res.analysis.replace(/[*#_`]/g, '')}`
+        );
+        utterance.lang = 'fr-FR';
+        window.speechSynthesis.speak(utterance);
+      }
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Erreur lors de l'analyse des images. Assurez-vous d'avoir une bonne connexion.");
@@ -259,7 +269,7 @@ export default function Malnutrition() {
                       </div>
                     )}
                     <button 
-                      onClick={clearImage}
+                      onClick={clearImages}
                       className="flex-1 bg-white text-slate-900 border border-slate-200 py-4 rounded-xl font-bold uppercase tracking-widest text-[10px] hover:bg-slate-50 transition-colors"
                     >
                       Nouveau Patient
