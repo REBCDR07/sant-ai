@@ -62,6 +62,10 @@ async function callAfriChat(messages: any[], expectJson = false) {
   return data.choices?.[0]?.message?.content ?? "";
 }
 
+app.get("/healthz", (_req, res) => {
+  return res.status(200).json({ status: "ok" });
+});
+
 app.post("/api/analyze-symptoms", async (req, res) => {
   const { symptoms, age, weight, sex } = req.body;
 
