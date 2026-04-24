@@ -1,20 +1,23 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# SanteAI
 
-# Run and deploy your AI Studio app
+SanteAI est un assistant de triage communautaire avec:
 
-This contains everything you need to run your app locally.
+- Frontend web React/Vite
+- API Express (triage, malnutrition, ASR, chatbot)
+- Application mobile Expo (dossier `mobile/`)
 
-View your app in AI Studio: https://ai.studio/apps/d3840f76-b605-4e56-bbb5-9354053d5d5e
+## 1. Lancer le backend/web
 
-## Run Locally
+1. `npm install`
+2. Copier `.env.example` vers `.env` et renseigner les cles API
+3. `npm run dev`
 
-**Prerequisites:**  Node.js
+## 2. Lancer l application mobile
 
+1. `cd mobile`
+2. `npm install`
+3. Copier `.env.example` vers `.env`
+4. Configurer `EXPO_PUBLIC_API_BASE_URL`
+5. `npm run start`
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Voir les details dans `mobile/README.md`.

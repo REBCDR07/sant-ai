@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "SanteAI Mobile",
+    "slug": "santeai-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "jsEngine": "hermes",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "plugins": [
+      "expo-asset",
+      "expo-font",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Cette application utilise le microphone pour enregistrer vos questions vocales."
+        }
+      ]
+    ],
+    "icon": "./assets/icon.png",
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-foreground.png",
+        "backgroundColor": "#0F766E"
+      },
+      "permissions": [
+        "RECORD_AUDIO",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ],
+      "package": "com.elton27.santeaimobile"
+    },
+    "ios": {
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Cette application utilise le microphone pour enregistrer vos questions vocales."
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "02c3d40a-604d-4d23-aa18-b6548edd2613"
+      }
+    }
+  }
+}

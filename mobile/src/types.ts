@@ -6,7 +6,7 @@ export interface Case {
   age: number;
   weight: number;
   sex: 'M' | 'F';
-  diseaseCategory: string; // Used for epidemic clustering
+  diseaseCategory: string;
   diagnosis: string;
   severity: Severity;
   instructions: string;
@@ -23,7 +23,7 @@ export interface MalnutritionCheck {
   riskLevel: 'Faible' | 'Modéré' | 'Élevé';
   analysis: string;
   recommendations: string;
-  timestamp: string; // ISO string
+  timestamp: string;
   followUpDate?: string;
   followUpCompleted?: boolean;
 }
@@ -35,4 +35,9 @@ export interface Alert {
   location: string;
   recommendations: string;
   timestamp: string;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
 }

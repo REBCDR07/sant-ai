@@ -1,0 +1,47 @@
+{
+  "name": "santeai-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "main": "expo/AppEntry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "generate:icons": "node scripts/generate-icons.mjs",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@expo-google-fonts/black-ops-one": "^0.4.1",
+    "@expo-google-fonts/syne": "^0.4.2",
+    "@expo/metro-runtime": "~5.0.5",
+    "@expo/vector-icons": "^14.1.0",
+    "@react-native-async-storage/async-storage": "2.1.2",
+    "expo": "~53.0.20",
+    "expo-asset": "~11.1.7",
+    "expo-av": "~15.1.6",
+    "expo-file-system": "~18.1.4",
+    "expo-font": "~13.3.2",
+    "expo-image-picker": "~16.1.4",
+    "expo-speech": "~13.1.7",
+    "expo-status-bar": "~2.2.3",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "react-native": "0.79.6",
+    "react-native-svg": "15.11.2",
+    "react-native-web": "^0.20.0"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/react": "~19.0.10",
+    "typescript": "~5.8.2"
+  },
+  "expo": {
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "exclude": [
+          "expo-av"
+        ]
+      }
+    }
+  }
+}
