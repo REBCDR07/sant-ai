@@ -65,6 +65,22 @@ export async function transcribeAudio(base64Audio: string, mimeType: string): Pr
   return data.text;
 }
 
+export async function generateTTSUrl(text: string): Promise<string> {
+  const response = await fetch('/api/tts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text })
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.error || `Erreur serveur: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data.url;
+}
+
 export async function chatWithAI(messages: Array<{ role: 'user'|'model', parts: Array<{ text: string }> }>): Promise<string> {
   const response = await fetch('/api/chat', {
     method: 'POST',

@@ -1,7 +1,7 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Camera, Image as ImageIcon, Loader2, AlertTriangle, Info, CheckCircle, X } from 'lucide-react';
-import { analyzeMalnutritionImages } from '../services/aiService';
+import { analyzeMalnutritionImages, generateTTSUrl } from '../services/aiService';
 import { useAppContext } from '../context/AppContext';
 
 export default function Malnutrition() {
@@ -10,13 +10,28 @@ export default function Malnutrition() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [images, setImages] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const [result, setResult] = useState<any | null>(null);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [followUpSet, setFollowUpSet] = useState(false);
 
+  useEffect(() => {
+    let interval: any;
+    if (loading) {
+      setProgress(0);
+      interval = setInterval(() => {
+        setProgress(p => p < 90 ? p + (90 - p) * 0.1 : p);
+      }, 500);
+    } else {
+      if (result) setProgress(100);
+      setTimeout(() => setProgress(0), 1000);
+    }
+    return () => clearInterval(interval);
+  }, [loading, result]);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+    const files = Array.from(e.target.files || []) as File[];
     if (files.length === 0) return;
 
     const validFiles = files.filter(f => f.type.startsWith('image/'));
@@ -75,14 +90,15 @@ export default function Malnutrition() {
       });
       setCurrentId(id);
 
-      // Auditory Feedback
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(
-          `L'analyse IA indique un risque ${res.riskLevel}. ${res.analysis.replace(/[*#_`]/g, '')}`
-        );
-        utterance.lang = 'fr-FR';
-        window.speechSynthesis.speak(utterance);
+      // Auditory Feedback via Afri Voice TTS
+      try {
+        const analysisText = res?.analysis || 'Analyse terminée.';
+        const textToSpeak = `L'analyse IA indique un risque ${res?.riskLevel || 'inconnu'}. ${analysisText.replace(/[*#_`]/g, '')}`;
+        const audioUrl = await generateTTSUrl(textToSpeak);
+        const audio = new Audio(audioUrl);
+        audio.play().catch(e => console.error("Could not play audio", e));
+      } catch (err) {
+        console.error("Erreur de synthèse vocale", err);
       }
     } catch (err: any) {
       console.error(err);
@@ -161,6 +177,17 @@ export default function Malnutrition() {
                   alt={`Patient ${idx + 1}`} 
                   className={`w-full h-full object-cover transition-opacity duration-300 ${loading ? 'opacity-50' : 'opacity-100'}`} 
                 />
+                <AnimatePresence>
+                  {loading && (
+                    <motion.div 
+                        initial={{ top: '0%' }}
+                        animate={{ top: '100%' }}
+                        transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
+                        exit={{ opacity: 0 }}
+                        className="absolute left-0 w-full h-1 bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.8)] z-10"
+                    />
+                  )}
+                </AnimatePresence>
                 {!loading && !result && (
                   <button 
                     onClick={() => removeImage(idx)}
@@ -193,15 +220,21 @@ export default function Malnutrition() {
           </div>
             
           {loading && (
-             <div className="w-full flex justify-center py-4">
-                <motion.div 
-                   animate={{ opacity: [1, 0.5, 1] }} 
-                   transition={{ repeat: Infinity, duration: 1.5 }}
-                   className="flex items-center gap-2 text-emerald-600 font-bold text-sm tracking-widest uppercase"
-                >
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Analyse des images...</span>
-                </motion.div>
+             <div className="w-full py-4">
+                <div className="flex items-center justify-between mb-2 text-[10px] font-bold uppercase tracking-widest text-emerald-600">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Analyse des images en cours...</span>
+                  </div>
+                  <span>{Math.round(progress)}%</span>
+                </div>
+                <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                  <motion.div 
+                    className="h-full bg-emerald-500"
+                    animate={{ width: `${progress}%` }}
+                    transition={{ ease: "linear" }}
+                  />
+                </div>
              </div>
           )}
 
@@ -220,7 +253,12 @@ export default function Malnutrition() {
             </button>
           ) : (
             (() => {
-              const style = getRiskStyle(result.riskLevel);
+              const riskLevel = result?.riskLevel || 'Modéré';
+              const riskScore = result?.riskScore || 0;
+              const analysis = result?.analysis || 'Analyse non disponible.';
+              const recommendations = result?.recommendations || 'Consultez un médecin pour confirmer.';
+              const style = getRiskStyle(riskLevel);
+              
               return (
                 <motion.div 
                   initial={{ opacity: 0, y: 10 }}
@@ -228,34 +266,34 @@ export default function Malnutrition() {
                   className={`${style.bg} border-2 ${style.border} rounded-2xl p-6 relative mt-6`}
                 >
                   <div className={`absolute -top-3 right-6 ${style.badge} px-4 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest shadow-sm`}>
-                    Risque: {result.riskLevel}
+                    Risque: {riskLevel}
                   </div>
                   
                   <div className="mb-4">
                     <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">
                       <span>Score IA</span>
-                      <span className={style.text}>{result.riskScore}/100</span>
+                      <span className={style.text}>{riskScore}/100</span>
                     </div>
                     <div className="w-full bg-slate-200/50 rounded-full h-2">
                       <div 
-                        className={`h-2 rounded-full ${result.riskScore > 75 ? 'bg-rose-500' : result.riskScore > 30 ? 'bg-amber-500' : 'bg-emerald-500'}`} 
-                        style={{ width: `${result.riskScore}%` }}
+                        className={`h-2 rounded-full ${riskScore > 75 ? 'bg-rose-500' : riskScore > 30 ? 'bg-amber-500' : 'bg-emerald-500'}`} 
+                        style={{ width: `${riskScore}%` }}
                       ></div>
                     </div>
                   </div>
 
                   <div className="bg-white rounded-lg p-4 border border-slate-200 mb-4 shadow-sm">
                     <p className="text-[10px] font-bold uppercase text-slate-500 mb-1 tracking-widest">Analyse détaillée</p>
-                    <p className={`text-sm font-serif italic ${style.text} leading-relaxed`}>{result.analysis}</p>
+                    <p className={`text-sm font-serif italic ${style.text} leading-relaxed`}>{analysis}</p>
                   </div>
 
                   <div className="bg-white rounded-lg p-4 border border-slate-200 shadow-sm">
                     <p className="text-[10px] font-bold uppercase text-slate-500 mb-1 tracking-widest">Recommandations</p>
-                    <p className="text-sm font-bold text-slate-900 leading-relaxed">{result.recommendations}</p>
+                    <p className="text-sm font-bold text-slate-900 leading-relaxed">{recommendations}</p>
                   </div>
 
                   <div className="flex flex-col sm:flex-row gap-3 mt-6">
-                    {(result.riskLevel === 'Élevé' || result.riskLevel === 'Modéré') && !followUpSet && (
+                    {(riskLevel === 'Élevé' || riskLevel === 'Modéré') && !followUpSet && (
                       <button 
                         onClick={handlePlanFollowUp}
                         className="flex-1 bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-100 py-4 rounded-xl font-bold uppercase tracking-widest text-[10px] transition-colors"

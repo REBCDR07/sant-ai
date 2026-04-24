@@ -68,6 +68,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
 
     const newAlerts: Alert[] = [...alerts];
+    let notifyNewAlert = false;
+    let newAlertName = "";
 
     Object.entries(categoryCounts).forEach(([disease, count]) => {
       if (count >= 3) {
@@ -85,6 +87,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }
         } else {
           // Create new alert
+          notifyNewAlert = true;
+          newAlertName = disease;
+          
           newAlerts.push({
             id: Math.random().toString(36).substring(7),
             disease,
@@ -99,6 +104,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     if (JSON.stringify(newAlerts) !== JSON.stringify(alerts)) {
       setAlerts(newAlerts);
+      
+      if (notifyNewAlert && 'Notification' in window && Notification.permission === 'granted') {
+          new Notification("🚨 Alerte Épidémique SantéAI", {
+            body: `Foyer suspecté de ${newAlertName} dans votre zone ! Veuillez vérifier le tableau d'alertes.`,
+          });
+      }
     }
   }, [cases]);
 

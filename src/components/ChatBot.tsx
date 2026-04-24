@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageSquare, X, Send, Loader2, Volume2, VolumeX, Mic, MicOff, PhoneCall, Siren } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { chatWithAI, transcribeAudio } from '../services/aiService';
+import { chatWithAI, transcribeAudio, generateTTSUrl } from '../services/aiService';
 
 type Message = { role: 'user' | 'model', text: string };
 
@@ -31,17 +31,33 @@ export default function ChatBot() {
     scrollToBottom();
   }, [messages, isOpen, isCallMode]);
 
-  const speak = (text: string) => {
-    if (!isSoundEnabled || !('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const cleanText = text.replace(/[*#_`]/g, '');
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.lang = 'fr-FR';
-    utterance.rate = 1.0; 
+  const speak = async (text: string) => {
+    if (!isSoundEnabled) return;
     
-    // In call mode, we might want to auto-listen after speaking. 
-    // For simplicity, we just speak for now.
-    window.speechSynthesis.speak(utterance);
+    // Fallback to browser TTS if generating URL fails or is unavailable
+    const fallbackTTS = () => {
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
+            const cleanText = text.replace(/[*#_`]/g, '');
+            const utterance = new SpeechSynthesisUtterance(cleanText);
+            utterance.lang = 'fr-FR';
+            utterance.rate = 1.0; 
+            window.speechSynthesis.speak(utterance);
+        }
+    };
+
+    try {
+        const cleanText = text.replace(/[*#_`]/g, '');
+        const audioUrl = await generateTTSUrl(cleanText);
+        const audio = new Audio(audioUrl);
+        audio.play().catch(e => {
+            console.error("Could not play remote audio", e);
+            fallbackTTS();
+        });
+    } catch(err) {
+        console.error("Erreur de synthèse vocale remote", err);
+        fallbackTTS();
+    }
   };
 
   const handleSend = async (overrideText?: string) => {

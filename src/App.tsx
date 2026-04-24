@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppProvider, useAppContext } from './context/AppContext';
 import Triage from './components/Triage';
 import Malnutrition from './components/Malnutrition';
@@ -11,6 +11,14 @@ import { motion, AnimatePresence } from 'motion/react';
 function AppContent() {
   const [activeTab, setActiveTab] = useState<'triage' | 'malnutrition' | 'history' | 'alerts'>('triage');
   const { alerts } = useAppContext();
+
+  useEffect(() => {
+    if ('Notification' in window) {
+      if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+        Notification.requestPermission();
+      }
+    }
+  }, []);
 
   const NavButtons = ({ isMobile = false }) => (
     <>

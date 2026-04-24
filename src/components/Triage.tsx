@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { motion } from 'motion/react';
+import React, { useState, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { analyzeSymptoms, transcribeAudio } from '../services/aiService';
 import { useAppContext } from '../context/AppContext';
 import { Leaf, Loader2, AlertTriangle, CheckCircle, Activity, Thermometer, Mic, MicOff } from 'lucide-react';
@@ -13,7 +13,22 @@ export default function Triage() {
   const [symptoms, setSymptoms] = useState('');
   
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [errors, setErrors] = useState<{ age?: string, weight?: string, symptoms?: string, global?: string }>({});
+
+  useEffect(() => {
+    let interval: any;
+    if (loading) {
+      setProgress(0);
+      interval = setInterval(() => {
+        setProgress(p => p < 90 ? p + (90 - p) * 0.1 : p);
+      }, 500);
+    } else {
+      setProgress(100);
+      setTimeout(() => setProgress(0), 1000);
+    }
+    return () => clearInterval(interval);
+  }, [loading]);
   
   const [result, setResult] = useState<null | any>(null);
   const [currentCaseId, setCurrentCaseId] = useState<string | null>(null);
@@ -308,14 +323,22 @@ export default function Triage() {
           className="w-full mt-8 bg-slate-900 text-white py-4 rounded-xl font-bold uppercase tracking-widest text-sm hover:bg-black transition-all flex items-center justify-center gap-2 relative overflow-hidden"
         >
           {loading ? (
-            <motion.div 
-               animate={{ opacity: [1, 0.5, 1] }} 
-               transition={{ repeat: Infinity, duration: 1.5 }}
-               className="flex items-center gap-2"
-            >
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span>Analyse en cours...</span>
-            </motion.div>
+             <div className="w-full px-4 flex flex-col gap-2">
+                <div className="flex items-center justify-between text-[10px] text-emerald-400">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Analyse des symptômes...</span>
+                  </div>
+                  <span>{Math.round(progress)}%</span>
+                </div>
+                <div className="w-full bg-slate-800 rounded-full h-1 overflow-hidden">
+                  <motion.div 
+                    className="h-full bg-emerald-500"
+                    animate={{ width: `${progress}%` }}
+                    transition={{ ease: "linear" }}
+                  />
+                </div>
+             </div>
           ) : (
             <div className="flex items-center gap-2">
               <Thermometer className="w-5 h-5" />

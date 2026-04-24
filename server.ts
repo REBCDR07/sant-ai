@@ -1,66 +1,48 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
-import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 
 dotenv.config();
 
-// Setup keys from env (for local/API key auth if available)
-const API_KEYS = [
-  process.env.GEMINI_API_KEY,
-  process.env.GEMINI_API_KEY_1,
-  process.env.GEMINI_API_KEY_2,
-  process.env.GEMINI_API_KEY_3
-].filter(Boolean) as string[];
-
-let currentKeyIndex = Math.floor(Math.random() * (API_KEYS.length || 1));
-
-async function fetchWithKeyRotation(generateContentFn: (ai: GoogleGenAI) => Promise<any>) {
-  let attempts = 0;
-  // Make sure we have at least 3 attempts to allow retrying on 503s
-  const maxAttempts = Math.max(API_KEYS.length, 3);
-
-  while (attempts < maxAttempts) {
-    try {
-      // If we have API keys, use them. Otherwise, initialize without an API key
-      // which will force the SDK to look for Application Default Credentials (ADC) or Vertex AI bindings.
-      const ai = API_KEYS.length > 0 
-        ? new GoogleGenAI({ apiKey: API_KEYS[currentKeyIndex % API_KEYS.length] })
-        : new GoogleGenAI({}); 
-
-      return await generateContentFn(ai);
-    } catch (error: any) {
-      const isRateLimit = error?.status === 429 || error?.message?.includes("RESOURCE_EXHAUSTED") || error?.message?.includes("quota");
-      const isUnavailable = error?.status === 503 || error?.message?.includes("UNAVAILABLE") || error?.message?.includes("high demand");
-      
-      attempts++;
-      
-      if (isRateLimit && API_KEYS.length > 0) {
-        console.warn(`Clé API épuisée (Index: ${currentKeyIndex % API_KEYS.length}). Rotation à la clé suivante...`);
-        currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length;
-        if (attempts >= maxAttempts) {
-          throw new Error("Quotas épuisés sur la totalité des clés API disponibles (429). Veuillez réessayer plus tard.");
-        }
-        await new Promise(r => setTimeout(r, 600)); // Courte pause avant retry
-      } else if (isUnavailable) {
-        console.warn(`Serveur IA surchargé (503). Tentative de reconnexion dans 2 secondes...`);
-        if (attempts >= maxAttempts) {
-          throw new Error("L'IA est actuellement surchargée en raison d'une forte demande globale (503). Veuillez patienter quelques minutes et réessayer.");
-        }
-        await new Promise(r => setTimeout(r, 2000)); // Pause plus longue pour les 503
-      } else {
-        throw error;
-      }
-    }
-  }
-}
+const AFRI_CHAT_API_KEY = process.env.AFRI_CHAT_API_KEY;
+const AFRI_TTS_API_KEY = process.env.AFRI_TTS_API_KEY;
+const AFRI_ASR_API_KEY = process.env.AFRI_ASR_API_KEY;
 
 export const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware pour parser le JSON avec une limite plus élevée pour les images base64
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+
+async function callAfriChat(messages: any[], expectJson: boolean = false) {
+  if (!AFRI_CHAT_API_KEY) throw new Error("Clé API AFRI_CHAT_API_KEY manquante");
+  
+  const payload: any = {
+    model: "gpt-5.4",
+    messages: messages,
+    extra_body: { reasoning_effort: "élevé" }
+  };
+  
+  if (expectJson) {
+      payload.response_format = { type: 'json_object' };
+  }
+
+  const res = await fetch("https://build.lewisnote.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${AFRI_CHAT_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Erreur API Chat (${res.status}): ${errorText}`);
+  }
+  const data = await res.json();
+  return data.choices[0].message.content;
+}
 
 // API Route: Triage (Symptômes)
 app.post("/api/analyze-symptoms", async (req, res) => {
@@ -79,47 +61,16 @@ Sexe: ${sex === 'M' ? 'Garçon/Homme' : 'Fille/Femme'}
 Symptômes observés: ${symptoms}
 
 Utilise des mots simples, pas de jargon compliqué. 
-Adapte les traitements aux réalités des centres de soins primaires ou dispensaires de village.`;
+Adapte les traitements aux réalités des centres de soins primaires ou dispensaires de village.
+Renvoie la réponse UNIQUEMENT au format JSON avec ces propriétés:
+- diseaseCategory (Chaîne de caractères normalisée de la maladie pour clustering)
+- diagnosis (Diagnostic probable, expliqué simplement)
+- severity (Doit être exactement: 'Critique', 'Urgent', 'Modéré', ou 'Stable')
+- instructions (Conduite à tenir pour l'ASC - ex: Référer au centre, donner SRO)
+- medications (Médicaments de première ligne pertinents)`;
 
     try {
-      const response = await fetchWithKeyRotation(async (aiClient) => {
-        return aiClient.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: prompt,
-          config: {
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                diseaseCategory: {
-                  type: Type.STRING,
-                  description: "Catégorie normalisée de la maladie pour clustering."
-                },
-                diagnosis: {
-                  type: Type.STRING,
-                  description: "Diagnostic probable, expliqué simplement."
-                },
-                severity: {
-                  type: Type.STRING,
-                  description: "Doit être l'une des valeurs EXACTES : 'Critique', 'Urgent', 'Modéré', 'Stable'.",
-                },
-                instructions: {
-                  type: Type.STRING,
-                  description: "Conduite à tenir pour l'ASC (ex: Référer au centre de santé, donner des SRO, etc)."
-                },
-                medications: {
-                  type: Type.STRING,
-                  description: "Médicaments de première ligne si disponibles et pertinents."
-                }
-              },
-              required: ["diseaseCategory", "diagnosis", "severity", "instructions", "medications"],
-            }
-          }
-        });
-      });
-
-      const text = response.text;
-      if (!text) throw new Error("Invalid response from AI");
+      const text = await callAfriChat([{ role: "user", content: prompt }], true);
       const data = JSON.parse(text);
       
       const validSeverities = ['Critique', 'Urgent', 'Modéré', 'Stable'];
@@ -130,23 +81,13 @@ Adapte les traitements aux réalités des centres de soins primaires ou dispensa
       res.json(data);
     } catch (error: any) {
       console.error(error);
-      const isRateLimit = error?.status === 429 || error?.message?.includes("RESOURCE_EXHAUSTED");
-      const isUnavailable = error?.status === 503 || error?.message?.includes("UNAVAILABLE") || error?.message?.includes("high demand");
-      
-      const statusCode = isRateLimit ? 429 : isUnavailable ? 503 : 500;
-      const errorMessage = isRateLimit 
-          ? "Quota API épuisé (429). Le service est temporairement indisponible."
-          : isUnavailable 
-          ? "L'IA est actuellement surchargée (503). Veuillez réessayer plus tard." 
-          : error.message || "Erreur interne du serveur";
-
-      res.status(statusCode).json({ error: errorMessage });
+      res.status(500).json({ error: error.message || "Erreur interne du serveur" });
     }
-  });
+});
 
-  // API Route: Malnutrition (Image)
-  app.post("/api/analyze-malnutrition", async (req, res) => {
-    const { base64Images } = req.body; // Expect array of base64 strings
+// API Route: Malnutrition (Image)
+app.post("/api/analyze-malnutrition", async (req, res) => {
+    const { base64Images } = req.body; 
     
     if (!base64Images || !Array.isArray(base64Images) || base64Images.length === 0) {
       return res.status(400).json({ error: "Au moins une image est requise" });
@@ -154,163 +95,147 @@ Adapte les traitements aux réalités des centres de soins primaires ou dispensa
 
     const prompt = `Tu es un expert médical (pédiatrie et nutrition) au sein d'une organisation humanitaire.
 Ta mission est d'effectuer un diagnostic visuel de la malnutrition infantile (MAM/MAS) sévère à partir de ces photos du patient.
-Même si les images ne montrent que des bras ou des parties du corps comme la tête, ou les cheveux, analyse CHAQUE image fournie minutieusement pour y déceler ces signes : 
+Analyse minutieusement pour y déceler:
 1. Marasme (fonte musculaire extrême, visage de vieillard, peau plissée).
-2. Kwashiorkor (prête particulièrement attention à la présence d'œdèmes bilatéraux gonflés, brillants ou tendus, lésions cutanées dermatoses, et l'assombrissement).
-3. Signes capillaires (texture des cheveux : cheveux fins, clairsemés, décoloration rousse/jaunâtre ou signe du drapeau "flag sign", perte de cheveux facile).
-Retourne un diagnostic unifié, un seul score de risque, un niveau global, l'analyse détaillée des signes sur l'ensemble des photos, et des recommandations.`;
+2. Kwashiorkor (prête particulièrement attention à la présence d'œdèmes bilatéraux, lésions cutanées dermatoses).
+3. Signes capillaires (cheveux fins, clairsemés, décoloration rousse/jaunâtre ou signe du drapeau, perte de cheveux facile).
 
-    const parts = base64Images.map(base64Image => {
-       let mimeType = 'image/jpeg';
-       if (base64Image.startsWith('data:image/png')) mimeType = 'image/png';
-       else if (base64Image.startsWith('data:image/webp')) mimeType = 'image/webp';
-       else if (base64Image.startsWith('data:image/heic')) mimeType = 'image/heic';
-       const base64Data = base64Image.split(',')[1] || base64Image;
-       return { inlineData: { data: base64Data, mimeType: mimeType } };
+Renvoie la réponse UNIQUEMENT au format JSON avec ces propriétés:
+- riskScore (entier de 0 à 100)
+- riskLevel (exactement 'Faible', 'Modéré', ou 'Élevé')
+- analysis (Analyse détaillée des signes expliquée simplement)
+- recommendations (Actions recommandées pour l'ASC)`;
+
+    const content: any[] = [{ type: "text", text: prompt }];
+
+    base64Images.forEach(base64Uri => {
+        content.push({
+            type: "image_url",
+            image_url: { url: base64Uri }
+        });
     });
 
     try {
-      const response = await fetchWithKeyRotation(async (aiClient) => {
-        return aiClient.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: [
-            ...parts,
-            prompt
-          ],
-          config: {
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                riskScore: { type: Type.INTEGER, description: "Score de risque de malnutrition (0 à 100)." },
-                riskLevel: { type: Type.STRING, description: "Doit être l'une des valeurs EXACTES : 'Faible', 'Modéré', 'Élevé'." },
-                analysis: { type: Type.STRING, description: "Analyse des signes visibles expliquée simplement." },
-                recommendations: { type: Type.STRING, description: "Actions recommandées pour l'ASC." }
-              },
-              required: ["riskScore", "riskLevel", "analysis", "recommendations"]
-            }
-          }
-        });
-      });
-
-      const text = response.text;
-      if (!text) throw new Error("Invalid response from AI");
+      const text = await callAfriChat([{ role: "user", content: content }], true);
       const data = JSON.parse(text);
       
       const validLevels = ['Faible', 'Modéré', 'Élevé'];
       if (!validLevels.includes(data.riskLevel)) {
-        data.riskLevel = 'Modéré'; // fallback
+        data.riskLevel = 'Modéré';
       }
 
       res.json(data);
     } catch (error: any) {
       console.error(error);
-      const isRateLimit = error?.status === 429 || error?.message?.includes("RESOURCE_EXHAUSTED");
-      const isUnavailable = error?.status === 503 || error?.message?.includes("UNAVAILABLE") || error?.message?.includes("high demand");
-      
-      const statusCode = isRateLimit ? 429 : isUnavailable ? 503 : 500;
-      const errorMessage = isRateLimit 
-          ? "Quota API épuisé (429). Le service est temporairement indisponible."
-          : isUnavailable 
-          ? "L'IA est actuellement surchargée (503). Veuillez réessayer plus tard." 
-          : error.message || "Erreur interne du serveur";
-
-      res.status(statusCode).json({ error: errorMessage });
+      res.status(500).json({ error: error.message || "Erreur interne du serveur" });
     }
-  });
+});
 
-  // API Route: Transcribe Audio
-  app.post("/api/transcribe", async (req, res) => {
+// API Route: Transcribe Audio
+app.post("/api/transcribe", async (req, res) => {
     const { base64Audio, mimeType } = req.body;
     
-    if (!base64Audio) {
-      return res.status(400).json({ error: "L'audio est requis" });
-    }
+    if (!base64Audio) return res.status(400).json({ error: "L'audio est requis" });
 
-    const base64Data = base64Audio.includes(',') ? base64Audio.split(',')[1] : base64Audio;
-    const resolvedMimeType = mimeType || 'audio/webm';
+    // Ensure it's a full data URI
+    let resolvedAudio = base64Audio;
+    if (!base64Audio.startsWith('data:')) {
+        const resolvedMimeType = mimeType || 'audio/webm';
+        resolvedAudio = `data:${resolvedMimeType};base64,${base64Audio}`;
+    }
 
     try {
-      const response = await fetchWithKeyRotation(async (aiClient) => {
-        return aiClient.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: [
-            {
-              inlineData: {
-                data: base64Data,
-                mimeType: resolvedMimeType
-              }
-            },
-            "Transcris cet audio médical avec une exactitude absolue de la dictée vocale. Utilise la langue parlée dans l'audio (probablement du français). N'ajoute AUCUN commentaire ni formatage exotique, renvoie strictement la transcription texte brut des symptômes ou du message. Corrige les fautes de frappe ou erreurs linguistiques pour la clarté."
-          ]
-        });
-      });
+      if (!AFRI_ASR_API_KEY) throw new Error("Clé API AFRI_ASR_API_KEY manquante");
 
-      const text = response.text;
-      if (!text) throw new Error("Invalid response from AI");
+      const response = await fetch("https://build.lewisnote.com/v1/audio/transcribe/realtime", {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${AFRI_ASR_API_KEY}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            url: resolvedAudio,
+            detect_language: true
+        })
+      });
       
-      res.json({ text: text.trim() });
+      if (!response.ok) {
+        const err = await response.text();
+        throw new Error(`ASR API Error: ${err}`);
+      }
+
+      const result = await response.json();
+      res.json({ text: result.text || "" });
     } catch (error: any) {
       console.error("Transcription error:", error);
-      const isRateLimit = error?.status === 429 || error?.message?.includes("RESOURCE_EXHAUSTED");
-      const isUnavailable = error?.status === 503 || error?.message?.includes("UNAVAILABLE") || error?.message?.includes("high demand");
-      
-      const statusCode = isRateLimit ? 429 : isUnavailable ? 503 : 500;
-      const errorMessage = isRateLimit 
-          ? "Quota API épuisé (429). Le service est temporairement indisponible."
-          : isUnavailable 
-          ? "L'IA est actuellement surchargée (503). Veuillez réessayer plus tard." 
-          : error.message || "Erreur lors de la transcription";
-
-      res.status(statusCode).json({ error: errorMessage });
+      res.status(500).json({ error: error.message || "Erreur lors de la transcription" });
     }
-  });
+});
 
-  // API Route: ChatBot AI
-  app.post("/api/chat", async (req, res) => {
-    const { messages } = req.body; // Expects an array of { role: 'user' | 'model', parts: [{text: "..."}] }
+// API Route: TTS
+app.post("/api/tts", async (req, res) => {
+    const { text } = req.body;
+    
+    if (!text) return res.status(400).json({ error: "Texte requis" });
+
+    try {
+      if (!AFRI_TTS_API_KEY) throw new Error("Clé API AFRI_TTS_API_KEY manquante");
+
+      const response = await fetch("https://build.lewisnote.com/v1/audio/afri-voice/tts", {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${AFRI_TTS_API_KEY}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            text: text,
+            lang: "fr"
+        })
+      });
+      
+      if (!response.ok) {
+        const err = await response.text();
+        throw new Error(`TTS API Error: ${err}`);
+      }
+
+      const result = await response.json();
+      res.json({ url: result.url });
+    } catch (error: any) {
+      console.error("TTS error:", error);
+      res.status(500).json({ error: error.message || "Erreur lors de la synthèse vocale" });
+    }
+});
+
+// API Route: ChatBot AI
+app.post("/api/chat", async (req, res) => {
+    const { messages } = req.body; 
     
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ error: "Historique des messages requis" });
     }
 
-    const systemPromptMessage = {
-      role: 'user',
-      parts: [{ text: "Tu es l'assistant IA médical intégré à SantéAI. Ton rôle est de conseiller et d'orienter les Agents de Santé Communautaires (ASC) dans des zones rurales ou des dispensaires. Fournis des explications claires, concises, des rappels de protocoles de santé primaires et réponds à leurs doutes. Reste professionnel, empathique, et n'oublie jamais de conseiller la référence vers un médecin pour les cas graves. IMPORTANT: N'utilise JAMAIS de formatage Markdown (pas d'astérisques * ni texte en gras ou italique). Structure tes réponses avec des sauts de ligne ou des tirets simples (-) uniquement, pour que ton texte puisse être lu vocalement sans symboles étranges." }]
-    };
+    // Convert from Gemini format ({role: "user", parts: [{text: "..."}]}) to OpenAI format ({role: "user", content: "..."})
+    const openAIMessages = messages.map(m => {
+        let textContent = m.parts ? m.parts.map((p: any) => p.text).join(" ") : "";
+        return {
+            role: m.role === 'model' ? 'assistant' : m.role,
+            content: textContent
+        };
+    });
 
-    const ackMessage = {
-      role: 'model',
-      parts: [{ text: "Compris. Je suis l'assistant SantéAI, prêt à aider l'ASC." }]
+    const systemPromptMessage = {
+      role: 'system',
+      content: "Tu es l'assistant IA médical intégré à SantéAI. Ton rôle est de conseiller et d'orienter les Agents de Santé Communautaires (ASC) dans des zones rurales ou des dispensaires. Fournis des explications claires, concises, des rappels de protocoles de santé primaires et réponds à leurs doutes. Reste professionnel, empathique, et n'oublie jamais de conseiller la référence vers un médecin pour les cas graves. IMPORTANT: N'utilise JAMAIS de formatage Markdown (pas d'astérisques * ni texte en gras ou italique). Structure tes réponses avec des sauts de ligne ou des tirets simples (-) uniquement, pour que ton texte puisse être lu vocalement."
     };
 
     try {
-      const response = await fetchWithKeyRotation(async (aiClient) => {
-        return aiClient.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: [systemPromptMessage, ackMessage, ...messages]
-        });
-      });
-
-      const text = response.text;
-      if (!text) throw new Error("Invalid response from AI");
-      
+      const text = await callAfriChat([systemPromptMessage, ...openAIMessages]);
       res.json({ reply: text });
     } catch (error: any) {
       console.error("Chat error:", error);
-      const isRateLimit = error?.status === 429 || error?.message?.includes("RESOURCE_EXHAUSTED");
-      const isUnavailable = error?.status === 503 || error?.message?.includes("UNAVAILABLE") || error?.message?.includes("high demand");
-      
-      const statusCode = isRateLimit ? 429 : isUnavailable ? 503 : 500;
-      const errorMessage = isRateLimit 
-          ? "Quota API épuisé (429). Le service est temporairement indisponible."
-          : isUnavailable 
-          ? "L'IA est actuellement surchargée (503). Veuillez réessayer plus tard." 
-          : error.message || "Erreur du chatbot";
-
-      res.status(statusCode).json({ error: errorMessage });
+      res.status(500).json({ error: error.message || "Erreur du chatbot" });
     }
-  });
+});
 
 // Vite middleware for development
 async function setupVite() {
