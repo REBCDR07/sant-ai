@@ -1,6 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import React from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useState } from 'react';
+import { RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useAppContext } from '../context/AppContext';
 import { Fonts } from '../theme/typography';
 
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>['name'];
@@ -149,8 +150,31 @@ function ModuleCard({ icon, title, steps, outputs }: ModuleItem) {
 }
 
 export default function HomeScreen({ onStart }: HomeScreenProps) {
+  const { refreshSessionData } = useAppContext();
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refreshSessionData();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   return (
-    <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      contentContainerStyle={styles.container}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor="#0f766e"
+          colors={["#0f766e"]}
+        />
+      }
+    >
       <View style={styles.heroCard}>
         <Text style={styles.heroTitle}>SanteAI - Assistant de triage communautaire</Text>
         <Text style={styles.heroText}>

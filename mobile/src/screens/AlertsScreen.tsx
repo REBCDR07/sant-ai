@@ -1,47 +1,73 @@
-import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import {
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppContext } from '../context/AppContext';
 import { Fonts } from '../theme/typography';
 
 export default function AlertsScreen() {
-  const { alerts } = useAppContext();
+  const { alerts, refreshSessionData } = useAppContext();
+  const [refreshing, setRefreshing] = useState(false);
 
-  if (alerts.length === 0) {
-    return (
-      <View style={styles.emptyWrap}>
-        <Text style={styles.emptyTitle}>Aucune alerte</Text>
-        <Text style={styles.emptyText}>Situation sanitaire stable dans la zone.</Text>
-      </View>
-    );
-  }
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refreshSessionData();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.headerRow}>
-        <MaterialCommunityIcons name="alert-decagram" size={16} color="#475569" />
-        <Text style={styles.header}>Alertes district</Text>
-      </View>
-
-      {alerts.map((alertItem) => (
-        <View key={alertItem.id} style={styles.card}>
-          <View style={styles.badgeRow}>
-            <MaterialCommunityIcons name="biohazard" size={13} color="#be123c" />
-            <Text style={styles.badge}>Epidemie suspectee</Text>
-          </View>
-          <Text style={styles.disease}>{alertItem.disease}</Text>
-          <Text style={styles.meta}>
-            {alertItem.count} cas signales - {alertItem.location}
-          </Text>
-
-          <View style={styles.panel}>
-            <Text style={styles.panelTitle}>Action recommandee</Text>
-            <Text style={styles.panelText}>{alertItem.recommendations}</Text>
-          </View>
-
-          <Text style={styles.activeState}>Actif</Text>
+    <ScrollView
+      contentContainerStyle={[styles.container, alerts.length === 0 && styles.containerEmpty]}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor="#0f766e"
+          colors={['#0f766e']}
+        />
+      }
+    >
+      {alerts.length === 0 ? (
+        <View style={styles.emptyWrap}>
+          <Text style={styles.emptyTitle}>Aucune alerte</Text>
+          <Text style={styles.emptyText}>Situation sanitaire stable dans la zone.</Text>
         </View>
-      ))}
+      ) : (
+        <>
+          <View style={styles.headerRow}>
+            <MaterialCommunityIcons name="alert-decagram" size={16} color="#475569" />
+            <Text style={styles.header}>Alertes district</Text>
+          </View>
+
+          {alerts.map((alertItem) => (
+            <View key={alertItem.id} style={styles.card}>
+              <View style={styles.badgeRow}>
+                <MaterialCommunityIcons name="biohazard" size={13} color="#be123c" />
+                <Text style={styles.badge}>Epidemie suspectee</Text>
+              </View>
+              <Text style={styles.disease}>{alertItem.disease}</Text>
+              <Text style={styles.meta}>
+                {alertItem.count} cas signales - {alertItem.location}
+              </Text>
+
+              <View style={styles.panel}>
+                <Text style={styles.panelTitle}>Action recommandee</Text>
+                <Text style={styles.panelText}>{alertItem.recommendations}</Text>
+              </View>
+
+              <Text style={styles.activeState}>Actif</Text>
+            </View>
+          ))}
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -51,6 +77,9 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 10,
     paddingBottom: 24,
+  },
+  containerEmpty: {
+    flexGrow: 1,
   },
   emptyWrap: {
     flex: 1,

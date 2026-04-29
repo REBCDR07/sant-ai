@@ -11,29 +11,31 @@ import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import AppIcon from './src/components/AppIcon';
 import ChatAssistant from './src/components/ChatAssistant';
 import { AppProvider, useAppContext } from './src/context/AppContext';
 import AlertsScreen from './src/screens/AlertsScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
 import HomeScreen from './src/screens/HomeScreen';
+import HealthCentersScreen from './src/screens/HealthCentersScreen';
 import MalnutritionScreen from './src/screens/MalnutritionScreen';
 import TriageScreen from './src/screens/TriageScreen';
 import { Fonts } from './src/theme/typography';
 
-type TabKey = 'home' | 'triage' | 'malnutrition' | 'history' | 'alerts';
+type TabKey = 'home' | 'triage' | 'malnutrition' | 'centers' | 'history' | 'alerts';
 
 const TAB_LABELS: Record<TabKey, string> = {
   home: 'Accueil',
   triage: 'Triage',
   malnutrition: 'Visuel',
+  centers: 'Centres',
   history: 'Registre',
   alerts: 'Alertes',
 };
@@ -42,6 +44,7 @@ const TAB_ICONS: Record<TabKey, React.ComponentProps<typeof MaterialCommunityIco
   home: 'home-heart',
   triage: 'stethoscope',
   malnutrition: 'food-apple-outline',
+  centers: 'crosshairs-gps',
   history: 'clipboard-text-clock-outline',
   alerts: 'alert-decagram-outline',
 };
@@ -60,8 +63,8 @@ const textInputDefaultProps = (TextInput as any).defaultProps || {};
 
 function StartupScreen({ message }: { message: string }) {
   return (
-    <SafeAreaView style={styles.startupSafeArea}>
-      <StatusBar style="dark" />
+    <SafeAreaView edges={['top', 'left', 'right', 'bottom']} style={styles.startupSafeArea}>
+      <StatusBar style="dark" backgroundColor="#f1f5f9" translucent={false} />
       <View style={styles.startupWrap}>
         <View style={styles.startupLogoRing}>
           <AppIcon size={88} />
@@ -86,6 +89,8 @@ function AppShell() {
         return 'Nouveau Triage';
       case 'malnutrition':
         return 'Depistage Nutritionnel';
+      case 'centers':
+        return 'Centres de sante proches';
       case 'history':
         return 'Historique';
       case 'alerts':
@@ -107,6 +112,8 @@ function AppShell() {
         return <TriageScreen />;
       case 'malnutrition':
         return <MalnutritionScreen />;
+      case 'centers':
+        return <HealthCentersScreen />;
       case 'history':
         return <HistoryScreen />;
       case 'alerts':
@@ -117,8 +124,8 @@ function AppShell() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" />
+    <SafeAreaView edges={['top', 'left', 'right', 'bottom']} style={styles.safeArea}>
+      <StatusBar style="dark" backgroundColor="#ffffff" translucent={false} />
 
       <View style={styles.header}>
         <View style={styles.logoBox}>
@@ -184,15 +191,23 @@ export default function App() {
     };
   }, [fontsLoaded]);
 
-  if (!fontsLoaded || showStartup) {
-    return <StartupScreen message={!fontsLoaded ? 'Chargement des polices...' : 'Demarrage de SanteAI...'} />;
-  }
+  const renderApp = () => {
+    if (!fontsLoaded || showStartup) {
+      return (
+        <StartupScreen
+          message={!fontsLoaded ? 'Chargement des polices...' : 'Demarrage de SanteAI...'}
+        />
+      );
+    }
 
-  return (
-    <AppProvider>
-      <AppShell />
-    </AppProvider>
-  );
+    return (
+      <AppProvider>
+        <AppShell />
+      </AppProvider>
+    );
+  };
+
+  return <SafeAreaProvider>{renderApp()}</SafeAreaProvider>;
 }
 
 const styles = StyleSheet.create({

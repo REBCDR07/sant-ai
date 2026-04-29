@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, {
   ReactNode,
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -10,6 +11,12 @@ import React, {
 import { Alert, Case, MalnutritionCheck } from '../types';
 
 type FollowUpTarget = 'case' | 'malnutrition';
+
+type HydratedState = {
+  cases: Case[];
+  malnutritionChecks: MalnutritionCheck[];
+  alerts: Alert[];
+};
 
 interface AppState {
   ready: boolean;
@@ -23,6 +30,7 @@ interface AppState {
   setFollowUp: (id: string, type: FollowUpTarget, date: string) => void;
   toggleFollowUpCompleted: (id: string, type: FollowUpTarget) => void;
   clearHistory: () => void;
+  refreshSessionData: () => Promise<void>;
 }
 
 const STORAGE_KEYS = {
@@ -103,28 +111,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
   const [alerts, setAlerts] = useState<Alert[]>([]);
 
+  const readStoredState = useCallback(async (): Promise<HydratedState> => {
+    const values = await AsyncStorage.multiGet([
+      STORAGE_KEYS.cases,
+      STORAGE_KEYS.malnutrition,
+      STORAGE_KEYS.alerts,
+    ]);
+
+    const map = Object.fromEntries(values);
+
+    return {
+      cases: safeJsonParse<Case[]>(map[STORAGE_KEYS.cases] ?? null, []),
+      malnutritionChecks: safeJsonParse<MalnutritionCheck[]>(
+        map[STORAGE_KEYS.malnutrition] ?? null,
+        [],
+      ),
+      alerts: safeJsonParse<Alert[]>(map[STORAGE_KEYS.alerts] ?? null, []),
+    };
+  }, []);
+
+  const applyHydratedState = useCallback((state: HydratedState) => {
+    setCases(state.cases);
+    setMalnutritionChecks(state.malnutritionChecks);
+    setAlerts(state.alerts);
+  }, []);
+
+  const refreshSessionData = useCallback(async () => {
+    const state = await readStoredState();
+    applyHydratedState(state);
+  }, [applyHydratedState, readStoredState]);
+
   useEffect(() => {
     let mounted = true;
 
     async function hydrate() {
       try {
-        const values = await AsyncStorage.multiGet([
-          STORAGE_KEYS.cases,
-          STORAGE_KEYS.malnutrition,
-          STORAGE_KEYS.alerts,
-        ]);
-
+        const state = await readStoredState();
         if (!mounted) return;
-
-        const map = Object.fromEntries(values);
-        setCases(safeJsonParse<Case[]>(map[STORAGE_KEYS.cases] ?? null, []));
-        setMalnutritionChecks(
-          safeJsonParse<MalnutritionCheck[]>(
-            map[STORAGE_KEYS.malnutrition] ?? null,
-            [],
-          ),
-        );
-        setAlerts(safeJsonParse<Alert[]>(map[STORAGE_KEYS.alerts] ?? null, []));
+        applyHydratedState(state);
       } finally {
         if (mounted) {
           setReady(true);
@@ -137,7 +161,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [applyHydratedState, readStoredState]);
 
   useEffect(() => {
     if (!ready) return;
@@ -253,8 +277,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           // no-op
         });
       },
+      refreshSessionData,
     }),
-    [alerts, cases, malnutritionChecks, ready],
+    [alerts, cases, malnutritionChecks, ready, refreshSessionData],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

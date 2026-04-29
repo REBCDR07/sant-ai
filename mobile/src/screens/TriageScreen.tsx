@@ -1,8 +1,10 @@
 import { Audio } from 'expo-av';
+import * as Speech from 'expo-speech';
 import * as FileSystem from 'expo-file-system';
 import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -24,6 +26,26 @@ type FormErrors = {
 };
 
 type TriageResult = Awaited<ReturnType<typeof analyzeSymptoms>>;
+
+function buildTriageSpeech(result: TriageResult) {
+  const diagnosis = result.diagnosis.replace(/\s+/g, ' ').trim();
+  const instructions = result.instructions.replace(/\s+/g, ' ').trim();
+  const medications = result.medications.replace(/\s+/g, ' ').trim();
+
+  return [
+    result.analysisOrigin && result.analysisOrigin !== 'online'
+      ? result.analysisOrigin === 'cache'
+        ? 'Analyse depuis le cache local.'
+        : 'Analyse hors ligne.'
+      : '',
+    `Diagnostic ${result.severity}.`,
+    diagnosis,
+    `Conduite a tenir: ${instructions}`,
+    medications ? `Medicaments suggeres: ${medications}` : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
 
 function getSeverityColors(severity: Severity) {
   switch (severity) {
@@ -55,7 +77,7 @@ function getSeverityColors(severity: Severity) {
 }
 
 export default function TriageScreen() {
-  const { addCase, setFollowUp } = useAppContext();
+  const { addCase, setFollowUp, refreshSessionData } = useAppContext();
 
   const [age, setAge] = useState('');
   const [weight, setWeight] = useState('');
@@ -71,6 +93,7 @@ export default function TriageScreen() {
 
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const recordingRef = useRef<Audio.Recording | null>(null);
 
   const resetForm = () => {
@@ -203,6 +226,11 @@ export default function TriageScreen() {
       );
 
       setResult(triage);
+      Speech.stop();
+      Speech.speak(buildTriageSpeech(triage), {
+        language: 'fr-FR',
+        rate: 0.98,
+      });
 
       const caseId = addCase({
         age: Number(age),
@@ -222,6 +250,15 @@ export default function TriageScreen() {
     }
   };
 
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refreshSessionData();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const handlePlanFollowUp = () => {
     if (!currentCaseId) return;
 
@@ -236,7 +273,17 @@ export default function TriageScreen() {
     const colors = getSeverityColors(result.severity);
 
     return (
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScrollView
+        contentContainerStyle={styles.container}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#0f766e"
+            colors={['#0f766e']}
+          />
+        }
+      >
         <Text style={styles.pageTitle}>Analyse terminee</Text>
         <Text style={styles.pageSubTitle}>Diagnostic IA et recommandations</Text>
 
@@ -280,7 +327,17 @@ export default function TriageScreen() {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView
+      contentContainerStyle={styles.container}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor="#0f766e"
+          colors={["#0f766e"]}
+        />
+      }
+    >
       <Text style={styles.pageTitle}>Nouveau triage patient</Text>
       <Text style={styles.pageSubTitle}>Saisir les informations du patient</Text>
 

@@ -1,3 +1,4 @@
+import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import * as Speech from 'expo-speech';
@@ -7,15 +8,17 @@ import {
   Animated,
   Easing,
   Image,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppContext } from '../context/AppContext';
-import { analyzeMalnutritionImages } from '../services/aiService';
+import { analyzeMalnutritionImages, transcribeAudio } from '../services/aiService';
 import { Fonts } from '../theme/typography';
 
 type SelectedImage = {
@@ -24,6 +27,7 @@ type SelectedImage = {
 };
 
 type MalnutritionResult = Awaited<ReturnType<typeof analyzeMalnutritionImages>>;
+type MalnutritionSubject = NonNullable<MalnutritionResult['subjects']>[number];
 
 type ImageDiagnosis = {
   imageUri: string;
@@ -79,13 +83,60 @@ function compactForSpeech(text: string, maxLength = 130) {
   return `${normalized.slice(0, maxLength).trim()}...`;
 }
 
-function buildDiagnosisSpeech(index: number, result: MalnutritionResult) {
-  const briefRecommendation = compactForSpeech(
-    result.recommendations || result.analysis || '',
-  );
+function buildSubjectSpeech(subject: MalnutritionSubject, subjectNumber: number) {
+  const parts = [
+    subject.label || `Sujet ${subjectNumber}`,
+    subject.suspectedCondition,
+    `risque ${subject.riskLevel}`,
+  ];
 
-  const header = `Image ${index + 1}. Risque ${result.riskLevel}. Score ${result.riskScore} sur 100.`;
-  return briefRecommendation ? `${header} ${briefRecommendation}` : header;
+  if (subject.visibleSigns.length > 0) {
+    parts.push(`signes ${subject.visibleSigns.slice(0, 2).join(', ')}`);
+  }
+
+  const recommendation = compactForSpeech(subject.recommendations || subject.analysis || '', 95);
+  if (recommendation) {
+    parts.push(recommendation);
+  }
+
+  return parts.filter(Boolean).join('. ');
+}
+
+function buildDiagnosisSpeech(index: number, result: MalnutritionResult) {
+  const summary = compactForSpeech(result.overallSummary || result.analysis || '', 150);
+  const notes = compactForSpeech(result.scanNotes || result.imageQuality || '', 90);
+  const subjects = (result.subjects || []).slice(0, 2);
+  const subjectSpeech = subjects
+    .map((subject, subjectIndex) => buildSubjectSpeech(subject, subjectIndex + 1))
+    .filter(Boolean);
+
+  const parts = [
+    result.analysisOrigin && result.analysisOrigin !== 'online'
+      ? result.analysisOrigin === 'cache'
+        ? 'Analyse depuis le cache local.'
+        : 'Analyse hors ligne.'
+      : '',
+    `Image ${index + 1}.`,
+    result.peopleDetected > 1
+      ? `${result.peopleDetected} personnes visibles.`
+      : result.peopleDetected === 1
+        ? 'Une personne visible.'
+        : 'Aucune personne clairement détectée.',
+    `Risque global ${result.riskLevel}. Score ${result.riskScore} sur 100.`,
+    summary,
+    notes,
+  ];
+
+  if (subjectSpeech.length > 0) {
+    parts.push(`Details par sujet: ${subjectSpeech.join(' | ')}`);
+  }
+
+  const recommendation = compactForSpeech(result.recommendations || '', 120);
+  if (recommendation) {
+    parts.push(`Action: ${recommendation}`);
+  }
+
+  return parts.filter(Boolean).join(' ');
 }
 
 async function speakImageDiagnosis(index: number, result: MalnutritionResult) {
@@ -126,14 +177,34 @@ async function speakImageDiagnosis(index: number, result: MalnutritionResult) {
   });
 }
 
+function normalizeDisplayText(value?: string) {
+  return value && value.trim().length > 0 ? value.trim() : '';
+}
+
+function resolveMimeTypeFromUri(uri: string) {
+  const normalized = uri.toLowerCase();
+  if (normalized.endsWith('.m4a')) return 'audio/m4a';
+  if (normalized.endsWith('.caf')) return 'audio/x-caf';
+  if (normalized.endsWith('.3gp')) return 'audio/3gpp';
+  if (normalized.endsWith('.aac')) return 'audio/aac';
+  if (normalized.endsWith('.wav')) return 'audio/wav';
+  if (normalized.endsWith('.mp3')) return 'audio/mpeg';
+  return 'audio/mp4';
+}
+
 export default function MalnutritionScreen() {
-  const { addMalnutritionCheck, setFollowUp } = useAppContext();
+  const { addMalnutritionCheck, setFollowUp, refreshSessionData } = useAppContext();
 
   const [images, setImages] = useState<SelectedImage[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeScanIndex, setActiveScanIndex] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [diagnoses, setDiagnoses] = useState<ImageDiagnosis[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [imageNotes, setImageNotes] = useState('');
+  const [isRecordingNotes, setIsRecordingNotes] = useState(false);
+  const [isTranscribingNotes, setIsTranscribingNotes] = useState(false);
+  const recordingRef = useRef<Audio.Recording | null>(null);
 
   const scanProgress = useRef(new Animated.Value(0)).current;
 
@@ -176,6 +247,10 @@ export default function MalnutritionScreen() {
     setActiveScanIndex(null);
     setError('');
     setDiagnoses([]);
+    setImageNotes('');
+    setIsRecordingNotes(false);
+    setIsTranscribingNotes(false);
+    recordingRef.current = null;
   };
 
   const appendAssets = async (assets: ImagePicker.ImagePickerAsset[]) => {
@@ -186,6 +261,69 @@ export default function MalnutritionScreen() {
       setError('');
     } catch {
       setError('Impossible de preparer les images');
+    }
+  };
+
+  const stopNotesRecording = async () => {
+    const recording = recordingRef.current;
+    if (!recording) {
+      setIsRecordingNotes(false);
+      return;
+    }
+
+    try {
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      recordingRef.current = null;
+      setIsRecordingNotes(false);
+
+      if (!uri) return;
+
+      setIsTranscribingNotes(true);
+      const base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const text = (await transcribeAudio(base64, resolveMimeTypeFromUri(uri))).trim();
+      if (!text) return;
+
+      setImageNotes((prev) => (prev ? `${prev}
+${text}` : text));
+      setError('');
+    } catch {
+      setError('Echec transcription vocale');
+    } finally {
+      setIsTranscribingNotes(false);
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+    }
+  };
+
+  const toggleNotesRecording = async () => {
+    if (isRecordingNotes) {
+      await stopNotesRecording();
+      return;
+    }
+
+    try {
+      const permission = await Audio.requestPermissionsAsync();
+      if (permission.status !== 'granted') {
+        setError('Autorisation micro requise');
+        return;
+      }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY,
+      );
+
+      recordingRef.current = recording;
+      setIsRecordingNotes(true);
+      setError('');
+    } catch {
+      setError('Impossible de demarrer le micro');
     }
   };
 
@@ -246,6 +384,7 @@ export default function MalnutritionScreen() {
     setError('');
     Speech.stop();
 
+    const notes = imageNotes.trim();
     const nextDiagnoses: ImageDiagnosis[] = images.map((entry) => ({
       imageUri: entry.uri,
       followUpSet: false,
@@ -257,7 +396,10 @@ export default function MalnutritionScreen() {
         let speechResult: MalnutritionResult | null = null;
 
         try {
-          const analysis = await analyzeMalnutritionImages([images[index].base64Uri]);
+          const analysis = await analyzeMalnutritionImages([images[index].base64Uri], {
+            imageNotes: notes,
+            patientNotes: notes,
+          });
 
           const checkId = addMalnutritionCheck({
             imageUrl: images[index].uri,
@@ -289,7 +431,9 @@ export default function MalnutritionScreen() {
 
       const successCount = nextDiagnoses.filter((entry) => entry.result).length;
       if (successCount === 0) {
-        setError('Aucun diagnostic n a pu etre produit. Verifiez la connexion et les cles API.');
+        setError(
+          'Aucun diagnostic n a pu etre produit. Verifiez la connexion, les cles API ou le mode hors ligne.',
+        );
       }
     } finally {
       setLoading(false);
@@ -297,6 +441,16 @@ export default function MalnutritionScreen() {
     }
   };
 
+  const handleRefresh = async () => {
+    if (loading) return;
+
+    setRefreshing(true);
+    try {
+      await refreshSessionData();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const handlePlanFollowUp = (index: number) => {
     const entry = diagnoses[index];
@@ -314,7 +468,17 @@ export default function MalnutritionScreen() {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView
+      contentContainerStyle={styles.container}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor="#0f766e"
+          colors={['#0f766e']}
+        />
+      }
+    >
       <Text style={styles.pageTitle}>Depistage malnutrition</Text>
       <Text style={styles.pageSubTitle}>Photos visage, cheveux et membres</Text>
 
@@ -335,6 +499,41 @@ export default function MalnutritionScreen() {
           </View>
         </TouchableOpacity>
       </View>
+
+      <View style={styles.notesHeader}>
+        <Text style={styles.label}>Description vocale ou texte de l'image</Text>
+        <TouchableOpacity
+          style={[styles.micButton, isRecordingNotes && styles.micButtonRecording]}
+          onPress={toggleNotesRecording}
+          disabled={loading || isTranscribingNotes}
+        >
+          {isTranscribingNotes ? (
+            <ActivityIndicator color="#ffffff" size="small" />
+          ) : (
+            <View style={styles.actionButtonInner}>
+              <MaterialCommunityIcons
+                name={isRecordingNotes ? 'stop-circle-outline' : 'microphone-outline'}
+                size={16}
+                color="#ffffff"
+              />
+              <Text style={styles.micButtonText}>{isRecordingNotes ? 'Stop' : 'Dictee'}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      <TextInput
+        multiline
+        value={imageNotes}
+        onChangeText={setImageNotes}
+        style={styles.notesInput}
+        placeholder="Décrivez ce que vous voyez: visage, oedemes, cheveux, maigreur..."
+        editable={!loading && !isTranscribingNotes}
+      />
+
+      <Text style={styles.notesHint}>
+        Ces notes servent aussi en mode hors ligne et améliorent l'analyse des images multiples.
+      </Text>
 
       {images.length === 0 ? (
         <View style={styles.emptyBox}>
@@ -428,6 +627,10 @@ export default function MalnutritionScreen() {
             }
 
             const colors = getRiskColors(entry.result.riskLevel);
+            const peopleDetected = entry.result.peopleDetected ?? entry.result.subjects.length;
+            const imageNotes = normalizeDisplayText(entry.result.scanNotes || entry.result.imageQuality);
+            const summaryText = normalizeDisplayText(entry.result.overallSummary || entry.result.analysis);
+            const subjectCount = entry.result.subjects.length;
 
             return (
               <View
@@ -444,15 +647,118 @@ export default function MalnutritionScreen() {
                   </View>
                 </View>
 
+                <View style={styles.metaRow}>
+                  <View style={styles.metaPill}>
+                    <MaterialCommunityIcons name="account-group-outline" size={12} color="#0f172a" />
+                    <Text style={styles.metaPillText}>
+                      {peopleDetected > 1
+                        ? `${peopleDetected} personnes visibles`
+                        : peopleDetected === 1
+                          ? '1 personne visible'
+                          : 'Aucune personne clairement visible'}
+                    </Text>
+                  </View>
+
+                  {subjectCount > 0 ? (
+                    <View style={styles.metaPill}>
+                      <MaterialCommunityIcons name="clipboard-text-outline" size={12} color="#0f172a" />
+                      <Text style={styles.metaPillText}>{subjectCount} sujet(s) détaillé(s)</Text>
+                    </View>
+                  ) : null}
+                </View>
+
                 <Text style={[styles.scoreText, { color: colors.title }]}>Score IA: {entry.result.riskScore}/100</Text>
+
+                {entry.result.analysisOrigin && entry.result.analysisOrigin !== 'online' ? (
+                  <View style={styles.originBadge}>
+                    <Text style={styles.originBadgeText}>
+                      {entry.result.analysisOrigin === 'cache' ? 'Cache local' : 'Mode hors ligne'}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {entry.result.offlineReason ? (
+                  <Text style={styles.offlineNote}>{entry.result.offlineReason}</Text>
+                ) : null}
 
                 <View style={styles.panel}>
                   <Text style={styles.panelTitle}>Analyse detaillee</Text>
-                  <Text style={styles.panelText}>{entry.result.analysis}</Text>
+                  <Text style={styles.panelText}>{summaryText || 'Analyse non disponible.'}</Text>
                 </View>
 
+                {imageNotes ? (
+                  <View style={styles.noticePanel}>
+                    <Text style={styles.panelTitle}>Notes de lecture</Text>
+                    <Text style={styles.panelText}>{imageNotes}</Text>
+                  </View>
+                ) : null}
+
+                {entry.result.subjects.length > 0 ? (
+                  <View style={styles.subjectsWrap}>
+                    <Text style={styles.panelTitle}>Personnes detectees</Text>
+                    {entry.result.subjects.map((subject, subjectIndex) => {
+                      const subjectColors = getRiskColors(subject.riskLevel);
+                      const visibleSigns = subject.visibleSigns.slice(0, 4);
+                      const urgentSigns = subject.urgentSigns?.slice(0, 4) ?? [];
+
+                      return (
+                        <View key={`${entry.imageUri}-${index}-${subject.subjectIndex}-${subjectIndex}`} style={styles.subjectCard}>
+                          <View style={styles.subjectHeader}>
+                            <View style={styles.subjectHeaderTextWrap}>
+                              <Text style={styles.subjectTitle}>{subject.label}</Text>
+                              <Text style={styles.subjectMetaText}>
+                                {subject.suspectedCondition}
+                                {subject.location ? ` - ${subject.location}` : ''}
+                              </Text>
+                            </View>
+
+                            <View style={[styles.subjectBadge, { backgroundColor: subjectColors.badgeBg }]}>
+                              <Text style={styles.subjectBadgeText}>{subject.riskLevel}</Text>
+                            </View>
+                          </View>
+
+                          <Text style={[styles.subjectScoreText, { color: subjectColors.title }]}>
+                            Score {subject.riskScore}/100
+                          </Text>
+
+                          {visibleSigns.length > 0 ? (
+                            <View style={styles.chipRow}>
+                              {visibleSigns.map((sign) => (
+                                <View key={`${subject.subjectIndex}-${sign}`} style={styles.chip}>
+                                  <Text style={styles.chipText}>{sign}</Text>
+                                </View>
+                              ))}
+                            </View>
+                          ) : null}
+
+                          <Text style={styles.panelText}>
+                            {subject.analysis || 'Analyse du sujet non detaillee.'}
+                          </Text>
+
+                          {subject.recommendations ? (
+                            <View style={styles.subjectAdviceBox}>
+                              <Text style={styles.panelTitle}>Conduite a tenir</Text>
+                              <Text style={styles.panelText}>{subject.recommendations}</Text>
+                            </View>
+                          ) : null}
+
+                          {urgentSigns.length > 0 ? (
+                            <View style={styles.chipRow}>
+                              {urgentSigns.map((sign) => (
+                                <View key={`${subject.subjectIndex}-urgent-${sign}`} style={styles.urgentChip}>
+                                  <Text style={styles.urgentChipText}>{sign}</Text>
+                                </View>
+                              ))}
+                            </View>
+                          ) : null}
+                        </View>
+                      );
+                    })}
+                  </View>
+                ) : null}
+
                 <View style={styles.panel}>
-                  <Text style={styles.panelTitle}>Recommandations</Text>
+                  <Text style={styles.panelTitle}>Recommandations globales</Text>
                   <Text style={styles.panelText}>{entry.result.recommendations}</Text>
                 </View>
 
@@ -528,6 +834,50 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  notesHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  label: {
+    fontSize: 12,
+    fontFamily: Fonts.heading,
+    color: '#0f172a',
+  },
+  micButton: {
+    backgroundColor: '#0f766e',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    minWidth: 68,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  micButtonRecording: {
+    backgroundColor: '#be123c',
+  },
+  micButtonText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontFamily: Fonts.heading,
+  },
+  notesInput: {
+    minHeight: 84,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#0f172a',
+    textAlignVertical: 'top',
+  },
+  notesHint: {
+    fontSize: 11,
+    color: '#64748b',
+    lineHeight: 16,
   },
   actionButtonAlt: {
     flex: 1,
@@ -697,14 +1047,58 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: Fonts.display,
   },
+  metaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  metaPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.68)',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  metaPillText: {
+    color: '#0f172a',
+    fontSize: 11,
+    fontFamily: Fonts.heading,
+  },
   scoreText: {
     fontSize: 18,
     fontFamily: Fonts.display,
+  },
+  originBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#0f172a',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  originBadgeText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontFamily: Fonts.display,
+  },
+  offlineNote: {
+    color: '#334155',
+    fontSize: 11,
+    lineHeight: 16,
   },
   panel: {
     borderWidth: 1,
     borderColor: '#e2e8f0',
     backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 12,
+    gap: 4,
+  },
+  noticePanel: {
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f8fafc',
     borderRadius: 12,
     padding: 12,
     gap: 4,
@@ -718,6 +1112,86 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#0f172a',
     lineHeight: 18,
+  },
+  subjectsWrap: {
+    gap: 8,
+  },
+  subjectCard: {
+    borderWidth: 1,
+    borderColor: '#dbe4ee',
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    padding: 10,
+    gap: 6,
+  },
+  subjectHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  subjectHeaderTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  subjectTitle: {
+    fontSize: 13,
+    color: '#0f172a',
+    fontFamily: Fonts.display,
+  },
+  subjectMetaText: {
+    fontSize: 11,
+    color: '#475569',
+    lineHeight: 15,
+  },
+  subjectBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  subjectBadgeText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontFamily: Fonts.display,
+  },
+  subjectScoreText: {
+    fontSize: 16,
+    fontFamily: Fonts.display,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  chip: {
+    borderRadius: 999,
+    backgroundColor: '#e2e8f0',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  chipText: {
+    color: '#334155',
+    fontSize: 10,
+    fontFamily: Fonts.heading,
+  },
+  urgentChip: {
+    borderRadius: 999,
+    backgroundColor: '#fee2e2',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  urgentChipText: {
+    color: '#b91c1c',
+    fontSize: 10,
+    fontFamily: Fonts.heading,
+  },
+  subjectAdviceBox: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    backgroundColor: '#ffffff',
+    padding: 10,
+    gap: 4,
   },
   followUpButton: {
     backgroundColor: '#fef3c7',
